@@ -4,6 +4,12 @@ Hotel Reservation System built with the **structural Facade pattern** and a
 **PostgreSQL** persistence layer. The REST client only knows `HotelFacade`; underneath it orchestrates
 5 subsystems that **do not know each other**.
 
+## Live (production)
+
+- API: https://backend-production-ddcd.up.railway.app
+- Health: https://backend-production-ddcd.up.railway.app/actuator/health
+- Database: PostgreSQL (Railway plugin)
+
 ## Architecture
 
 ```
@@ -88,6 +94,6 @@ The repo includes a multi-stage `Dockerfile` and `system.properties` (Java 17).
 
 ## Team
 
-- Miguel Ceballos (miguelcebing)
-- Andres (Andres523-star)
-- Santiago Rosero (ssantivr)
+- Miguel Felipe Ceballos Ramírez — ID 931697
+- Andrés Felipe Bolaños Cabrera — ID 922647
+- Ian Santiago Ordoñez Rosero — ID 909560
