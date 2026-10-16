@@ -1,88 +1,93 @@
-# Hotel Reservas - Backend (Spring Boot) - Patron Facade
+# Hotel Reservations - Backend (Spring Boot) - Facade Pattern
 
-Sistema de Reservas de Hotel implementado con el **patron estructural Facade**.
-El cliente REST solo conoce `HotelFacade`; por debajo orquesta 5 subsistemas que **no se conocen entre si**.
+Hotel Reservation System built with the **structural Facade pattern** and a
+**PostgreSQL** persistence layer. The REST client only knows `HotelFacade`; underneath it orchestrates
+5 subsystems that **do not know each other**.
 
-## Arquitectura
+## Architecture
 
 ```
- [Frontend React] --HTTP--> [HotelController] --> [HotelFacade] --+--> HabitacionService
-        cliente            (solo traduce HTTP)    (orquesta)      +--> TarifaService
-                                                                 +--> ServicioAdicionalService
-                                                                 +--> FacturacionService
-                                                                 +--> AccesoService
-                                                                 +--> ReservaRepository (estado en memoria)
+ [React frontend] --HTTP--> [HotelController] --> [HotelFacade] --+--> RoomService
+        client              (translates HTTP)     (orchestrates)   +--> RateService
+                                                                 +--> AdditionalServiceService
+                                                                 +--> BillingService
+                                                                 +--> AccessService
+                                                                 +--> ReservationRepository (PostgreSQL)
+                                                                 +--> InvoiceRepository     (PostgreSQL)
 ```
 
-Reglas inviolables:
-1. `HotelController` solo inyecta `HotelFacade`.
-2. Ningun `*Service` inyecta a otro `*Service`.
-3. La fachada orquesta; las reglas de negocio viven en los subsistemas.
+Golden rules:
+1. `HotelController` only injects `HotelFacade`.
+2. No `*Service` injects another `*Service`.
+3. The facade orchestrates; business rules live in the subsystems.
 
 ## Stack
 
 - Java 17, Spring Boot 3.3.x, Maven.
-- Estado **en memoria** con colecciones concurrentes (`ConcurrentHashMap`, `CopyOnWriteArrayList`, `AtomicInteger`) - **sin base de datos**.
-- `BigDecimal` (escala 2, HALF_UP) para dinero; `java.time.LocalDate` para fechas.
+- **PostgreSQL + Spring Data JPA** for persistence (`reservations`, `contracted_services`,
+  `invoices`, `invoice_lines`). Room inventory (15 rooms) is code-defined and availability is
+  rebuilt from the persisted reservations on startup, so state **survives restarts**.
+- `BigDecimal` (scale 2, HALF_UP) for money; `java.time.LocalDate` for dates.
 
-## Endpoints (contrato REST)
+## REST contract
 
-| Metodo | Ruta | Fachada | Respuesta |
-|--------|------|---------|-----------|
-| POST | `/api/hotel/reservar` | `crearReserva` | 201 + `ReservaResponse` |
-| GET  | `/api/hotel/disponibilidad?fechaEntrada&fechaSalida&tipo?` | `consultarDisponibilidad` | 200 + lista |
-| POST | `/api/hotel/servicios/{reservaId}` | `agregarServicio` | 200 + `ReservaResponse` |
-| PUT  | `/api/hotel/checkin/{reservaId}` | `realizarCheckIn` | 200 + `ReservaResponse` (llave digital) |
-| PUT  | `/api/hotel/checkout/{reservaId}` | `realizarCheckOut` | 200 + `FacturaResponse` |
-| GET  | `/api/hotel/reserva/{reservaId}` | `obtenerReserva` | 200 + `ReservaResponse` |
+| Method | Route | Facade |
+|--------|-------|--------|
+| POST | `/api/hotel/reservations` | `createReservation` |
+| GET  | `/api/hotel/availability?checkIn&checkOut&roomType?` | `checkAvailability` |
+| POST | `/api/hotel/reservations/{id}/services` | `addService` |
+| PUT  | `/api/hotel/reservations/{id}/check-in` | `checkIn` |
+| PUT  | `/api/hotel/reservations/{id}/check-out` | `checkOut` |
+| GET  | `/api/hotel/reservations/{id}` | `getReservation` |
 
 Health check: `GET /actuator/health`.
+Status codes: 400 validation/malformed · 404 reservation or room not found · 409 no availability or invalid state.
 
-Codigos: 400 validacion/formato · 404 reserva o habitacion inexistente · 409 sin disponibilidad o estado invalido.
+## Domain rules
 
-## Reglas de dominio
+- 15 rooms: 6 singles (101-106), 6 doubles (201-206), 3 suites (301-303).
+- Base price/night: single $80, double $120, suite $250.
+- HIGH season (x1.5) when the check-in month is {12,1,6,7}; LOW otherwise.
+- Services: spa $50 (one-time), transfer $30 (one-time), breakfast $15 x nights.
+- Half-open ranges `[checkIn, checkOut)`: checking out on day X allows another check-in on day X.
+- State machine: `CONFIRMED -> CHECKED_IN -> CHECKED_OUT`.
+- Digital key (UUID) generated at check-in and revoked at check-out.
 
-- 15 habitaciones: 6 sencillas (101-106), 6 dobles (201-206), 3 suites (301-303).
-- Precios base/noche: sencilla $80, doble $120, suite $250.
-- Temporada ALTA (x1.5) si el mes de entrada es {12,1,6,7}; BAJA en el resto.
-- Servicios: spa $50 (unico), traslado $30 (unico), desayuno $15 x noches.
-- Rangos semiabiertos `[entrada, salida)`: salir el dia X permite entrar el dia X.
-- Maquina de estados: `CONFIRMADA -> CHECK_IN -> CHECK_OUT`.
-- Llave digital UUID generada en check-in y revocada en check-out.
-
-## Ejecutar en local
+## Run locally
 
 ```bash
-mvn spring-boot:run                 # http://localhost:8080
-mvn test                            # pruebas
-mvn -DskipTests clean package       # jar de produccion -> target/*.jar
+export PGHOST=localhost PGPORT=5432 PGDATABASE=railway PGUSER=postgres PGPASSWORD=postgres
+mvn spring-boot:run          # http://localhost:8080
+mvn test                     # tests (uses in-memory H2 for speed)
+mvn -DskipTests clean package
 java -jar target/*.jar
 ```
 
-## Variables de entorno
+## Environment variables
 
-- `PORT` - puerto del servidor (default `8080`).
-- `CORS_ALLOWED_ORIGINS` - origenes permitidos separados por coma (default `http://localhost:5173`).
+- `PORT` - server port (default `8080`).
+- `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` - PostgreSQL connection (provided by the
+  Railway plugin).
+- `CORS_ALLOWED_ORIGINS` - comma-separated allowed origins (default `http://localhost:5173`).
 
-## Despliegue (Railway)
+## Deploy (Railway)
 
-El repo incluye `Dockerfile` (build multi-etapa) y `system.properties` (Java 17).
+The repo includes a multi-stage `Dockerfile` and `system.properties` (Java 17).
 
 1. Railway -> New Project -> Deploy from GitHub repo.
-2. Generar dominio publico -> `https://<algo>.up.railway.app`.
-3. Variables: `CORS_ALLOWED_ORIGINS=https://<tu-frontend>.vercel.app`.
-4. Healthcheck path: `/actuator/health`.
+2. Add a **PostgreSQL** plugin to the project (links `PG*` variables to the service).
+3. Generate a public domain -> `https://<something>.up.railway.app`.
+4. Variables: `CORS_ALLOWED_ORIGINS=https://<your-frontend>.vercel.app`.
+5. Healthcheck path: `/actuator/health`.
 
-## Pruebas
+## Tests
 
-`TarifaServiceTest`, `HabitacionServiceTest` (solapamientos + concurrencia), `ServicioAdicionalServiceTest`,
-`HotelFacadeTest` (flujo completo + compensacion), `HotelControllerTest` (MockMvc) y `ArquitecturaFacadeTest`
-(verifica que el patron Facade se cumple).
+`RateServiceTest`, `RoomServiceTest` (overlaps + concurrency), `AdditionalServiceServiceTest`,
+`HotelFacadeTest` (full flow over JPA), `HotelFacadeCompensationTest` (compensation),
+`HotelControllerTest` (MockMvc) and `ArchitectureFacadeTest` (enforces the Facade pattern).
 
-## Equipo
+## Team
 
 - Miguel Ceballos (miguelcebing)
 - Andres (Andres523-star)
 - Santiago Rosero (ssantivr)
-
-> Nota: el estado es **en memoria**; las reservas se pierden al reiniciar la aplicacion.
